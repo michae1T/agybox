@@ -8,14 +8,16 @@ case "$CMD" in
 -h|--help)
 echo "agy-android-proot - Run agy CLI in Fedora proot on Android (Termux)"
 echo "Usage:"
-echo "  agy-android-proot                List sessions by last used and prompt"
-echo "  agy-android-proot <name|#>       Start or resume session by name or #"
-echo "  agy-android-proot manage         Delete, archive, or unarchive a session"
-echo "  agy-android-proot temp [new|#]   Create or resume a temp session (.tmp/)"
-echo "  agy-android-proot temp manage    Promote or delete a temp session"
-echo "  agy-android-proot backup [auth]  Back up sessions and chats to Google Drive"
-echo "  agy-android-proot restore        Restore sessions and chats from Google Drive"
-echo "  agy-android-proot --help         Show this help message"
+echo "  agy-android-proot                     List sessions by last used and prompt"
+echo "  agy-android-proot <name|#>            Start or resume session by name or #"
+echo "  agy-android-proot manage              Delete, archive, or unarchive a session"
+echo "  agy-android-proot temp [new|#]        Create or resume a temp session (.tmp/)"
+echo "  agy-android-proot temp manage         Promote or delete a temp session"
+echo "  agy-android-proot backup              Back up chats + sessions to Google Drive"
+echo "  agy-android-proot backup auth         Re-authorize Google Drive in browser"
+echo "  agy-android-proot backup ignore [id]  Edit global or session .backupignore"
+echo "  agy-android-proot restore             Restore chats + sessions from Google Drive"
+echo "  agy-android-proot --help              Show this help message"
 exit 0
 ;;
 esac
@@ -63,40 +65,92 @@ return 1
 esac
 }
 
-if [ "$CMD" = "backup" ]; then
-ensure_drive
-if [ "$SUB" = "auth" ]; then
-auth_drive || exit 1
-exit 0
+init_global_ignore() {
+if [ ! -f .backupignore ]; then
+cat << 'IGN' > .backupignore
+# Global exclusions for agy-android-proot backup (rclone --exclude-from)
+/.name
+/.t
+/.ts
+/.run-agy.sh
+/.ex
+.venv/**
+venv/**
+node_modules/**
+__pycache__/**
+*.pyc
+.git/**
+target/**
+dist/**
+build/**
+IGN
 fi
-FED="$PREFIX/var/lib/proot-distro/installed-rootfs"
-BRAIN="$FED/fedora/root/.gemini/antigravity-cli/brain"
-EX=(--exclude .name --exclude .t)
-EX+=(--exclude .ts --exclude .run-agy.sh)
-echo "Backing up sessions to agy-drive:agy-backup/sessions..."
-rclone_try rclone copy . agy-drive:agy-backup/sessions "${EX[@]}" -v || exit 1
-if [ -d "$BRAIN" ]; then
-echo "Backing up transcripts to agy-drive:agy-backup/brain..."
-rclone_try rclone copy "$BRAIN" agy-drive:agy-backup/brain -v || exit 1
-fi
-echo "Backup complete."
-exit 0
-fi
+}
 
-if [ "$CMD" = "restore" ]; then
-ensure_drive
-FED="$PREFIX/var/lib/proot-distro/installed-rootfs"
-BRAIN="$FED/fedora/root/.gemini/antigravity-cli/brain"
-echo "Restoring sessions from agy-drive:agy-backup/sessions..."
-rclone_try rclone copy agy-drive:agy-backup/sessions . -v || exit 1
-if [ -d "$FED/fedora/root" ]; then
-mkdir -p "$BRAIN"
-echo "Restoring transcripts from agy-drive:agy-backup/brain..."
-rclone_try rclone copy agy-drive:agy-backup/brain "$BRAIN" -v || exit 1
+init_session_ignore() {
+DIR="$1"
+if [ ! -f "$DIR/.backupignore" ]; then
+cat << 'SIGN' > "$DIR/.backupignore"
+# Per-session exclusions for private Google Drive backup (rclone --exclude-from)
+# Add one pattern per line (e.g. folder/**, *.bin, secret.jpg).
+.venv/**
+venv/**
+node_modules/**
+__pycache__/**
+*.pyc
+.git/**
+target/**
+dist/**
+build/**
+SIGN
 fi
-echo "Restore complete."
-exit 0
+}
+
+init_common_context() {
+if [ ! -f GEMINI.md ]; then
+cat << 'GMD' > GEMINI.md
+# Session Backup Exclusion Policy
+
+Each session directory has a `.backupignore` file (using `rclone --exclude-from` syntax, one pattern per line, such as `folder/**`, `*.bin`, or `secret.jpg`) that controls what is excluded when backing up to the user's private Google Drive.
+
+Whenever you create, download, inspect, or notice files in the current session directory:
+1. Keep `.backupignore` in this session directory updated to exclude anything that should NOT be uploaded to Google Drive:
+   - Virtual environments, package caches, build artifacts, and dependency folders (`.venv/**`, `node_modules/**`, `__pycache__/**`, `build/**`, etc.).
+   - Most binaries, archives, disk images, or large generated artifacts—unless they are small helper scripts or utilities worth keeping.
+   - Anything highly sensitive if it ends up in the session directory (such as photos or scans of a passport or ID, bank details, financial documents, private keys, `.env` secrets, or credentials).
+2. Use `rclone` patterns relative to the session root (for directories use `dir/**`; for single files use `filename.ext` or `subdir/filename.ext`).
+3. If you are in doubt about whether a file or binary should be excluded or backed up, ask the user for confirmation before changing `.backupignore` or assuming it is safe.
+GMD
 fi
+}
+
+build_excludes() {
+init_global_ignore
+cat .backupignore > .ex
+for BASE in . .tmp .archive; do
+[ -d "$BASE" ] || continue
+while IFS= read -r D; do
+if [ "$BASE" = "." ]; then
+P="$D"
+else
+P="$BASE/$D"
+fi
+[ -d "$P" ] || continue
+init_session_ignore "$P"
+while IFS= read -r L; do
+L="${L%$'\r'}"
+case "$L" in
+""|\#*) continue ;;
+esac
+L="${L#/}"
+printf '/%s/' "$P" >> .ex
+echo "$L" >> .ex
+printf '/%s/**/' "$P" >> .ex
+echo "$L" >> .ex
+done < "$P/.backupignore"
+done < <(sorted_dirs "$BASE")
+done
+}
 
 sorted_dirs() {
 BASE="${1:-.}"
@@ -125,6 +179,93 @@ rand_name() {
 R=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
 printf 'tmp-%s\n' "$R"
 }
+
+if [ "$CMD" = "backup" ]; then
+if [ "$SUB" = "ignore" ]; then
+init_global_ignore
+TARGET=".backupignore"
+ARG3="${3:-}"
+if [ -n "$ARG3" ]; then
+if [ -d "$ARG3" ]; then
+init_session_ignore "$ARG3"
+TARGET="$ARG3/.backupignore"
+elif [ -d ".tmp/$ARG3" ]; then
+init_session_ignore ".tmp/$ARG3"
+TARGET=".tmp/$ARG3/.backupignore"
+else
+echo "Session not found: $ARG3"
+exit 1
+fi
+fi
+ED="${EDITOR:-}"
+if [ -z "$ED" ]; then
+if command -v nano >/dev/null 2>&1; then
+ED=nano
+elif command -v vi >/dev/null 2>&1; then
+ED=vi
+fi
+fi
+if [ -n "$ED" ]; then
+"$ED" "$TARGET"
+else
+echo "Edit $PWD/$TARGET"
+cat "$TARGET"
+fi
+exit 0
+fi
+ensure_drive
+if [ "$SUB" = "auth" ]; then
+auth_drive || exit 1
+exit 0
+fi
+FED="$PREFIX/var/lib/proot-distro/installed-rootfs"
+AGY_CLI="$FED/fedora/root/.gemini/antigravity-cli"
+if [ -d "$AGY_CLI" ]; then
+if [ -d "$AGY_CLI/brain" ]; then
+echo "Backing up transcripts to agy-drive:agy-backup/brain..."
+rclone_try rclone copy "$AGY_CLI/brain" agy-drive:agy-backup/brain -v || exit 1
+fi
+if [ -d "$AGY_CLI/conversations" ]; then
+echo "Backing up conversation state to agy-drive:agy-backup/conversations..."
+rclone_try rclone copy "$AGY_CLI/conversations" agy-drive:agy-backup/conversations -v || exit 1
+fi
+if [ -d "$AGY_CLI/knowledge" ]; then
+rclone_try rclone copy "$AGY_CLI/knowledge" agy-drive:agy-backup/knowledge -v || exit 1
+fi
+if [ -f "$AGY_CLI/settings.json" ]; then
+rclone_try rclone copyto "$AGY_CLI/settings.json" agy-drive:agy-backup/settings.json -v || exit 1
+fi
+else
+echo "Note: Fedora agy state not found at $AGY_CLI"
+fi
+build_excludes
+echo "Backing up sessions to agy-drive:agy-backup/sessions..."
+EX=(--exclude-from .ex --exclude-if-present .nobackup)
+rclone_try rclone copy . agy-drive:agy-backup/sessions "${EX[@]}" -v
+RC=$?
+rm -f .ex
+[ "$RC" -eq 0 ] || exit 1
+echo "Backup complete."
+exit 0
+fi
+
+if [ "$CMD" = "restore" ]; then
+ensure_drive
+FED="$PREFIX/var/lib/proot-distro/installed-rootfs"
+AGY_CLI="$FED/fedora/root/.gemini/antigravity-cli"
+echo "Restoring sessions from agy-drive:agy-backup/sessions..."
+rclone_try rclone copy agy-drive:agy-backup/sessions . -v || exit 1
+if [ -d "$FED/fedora/root" ]; then
+mkdir -p "$AGY_CLI/brain" "$AGY_CLI/conversations" "$AGY_CLI/knowledge"
+echo "Restoring transcripts and conversation state..."
+rclone_try rclone copy agy-drive:agy-backup/brain "$AGY_CLI/brain" -v || exit 1
+rclone copy agy-drive:agy-backup/conversations "$AGY_CLI/conversations" -v 2>/dev/null || true
+rclone copy agy-drive:agy-backup/knowledge "$AGY_CLI/knowledge" -v 2>/dev/null || true
+rclone copyto agy-drive:agy-backup/settings.json "$AGY_CLI/settings.json" -v 2>/dev/null || true
+fi
+echo "Restore complete."
+exit 0
+fi
 
 if [ "$CMD" = "manage" ]; then
 mkdir -p .archive
@@ -384,6 +525,8 @@ REL="$SESSION"
 fi
 
 mkdir -p "$REL"
+init_session_ignore "$REL"
+init_common_context
 date +%s > "$REL/.last"
 printf '%s\n' "$REL" > .name
 W="/root/sessions/$REL"
@@ -396,6 +539,10 @@ if [ -f /root/.bash_profile ]; then
 fi
 [ -f /root/.bashrc ] && . /root/.bashrc
 export PATH="/root/.local/bin:$PATH"
+mkdir -p /root/.gemini/config
+if [ ! -e /root/.gemini/config/GEMINI.md ] || [ -L /root/.gemini/config/GEMINI.md ]; then
+ln -sf /root/sessions/GEMINI.md /root/.gemini/config/GEMINI.md
+fi
 S=$(cat /root/sessions/.name)
 cd "/root/sessions/$S" || exit 1
 BRAIN=/root/.gemini/antigravity-cli/brain
