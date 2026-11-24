@@ -1,0 +1,222 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Runs Google Antigravity CLI (agy) inside Fedora proot-distro on Android (Termux).
+# Tracks per-session folders, last-used timestamps, workspace trust, and conversation IDs.
+
+CMD="${1:-}"
+case "$CMD" in
+-h|--help)
+echo "agy-android-proot - Run agy CLI in Fedora proot on Android (Termux)"
+echo "Usage:"
+echo "  agy-android-proot              List sessions by last used and prompt"
+echo "  agy-android-proot <name|#>     Start or resume session by name or #"
+echo "  agy-android-proot manage       Delete, archive, or unarchive a session"
+echo "  agy-android-proot --help       Show this help message"
+exit 0
+;;
+esac
+
+cd || exit 1
+mkdir -p sessions
+cd sessions || exit 1
+
+sorted_dirs() {
+for D in */; do
+[ -d "$D" ] || continue
+D="${D%/}"
+TS=0
+if [ -f "$D/.last" ]; then
+read -r TS < "$D/.last"
+else
+stat -c %Y "$D" > .ts 2>/dev/null
+read -r TS < .ts
+rm -f .ts
+fi
+TS="${TS:-0}"
+printf '%s ' "$TS"
+echo "$D"
+done | sort -rn | cut -d' ' -f2-
+}
+
+if [ "$CMD" = "manage" ]; then
+mkdir -p .archive
+echo "1) Delete"
+echo "2) Archive"
+echo "3) Unarchive"
+read -r -p "Choose action [1-3]: " ACT
+if [ "$ACT" = "1" ]; then
+ITEMS=()
+PATHS=()
+N=0
+while IFS= read -r D; do
+[ -d "$D" ] || continue
+N=$((N + 1))
+ITEMS+=("$D")
+PATHS+=("$D")
+printf '%s) ' "$N"
+echo "$D"
+done < <(sorted_dirs)
+while IFS= read -r D; do
+D="${D%/}"
+D="${D#.archive/}"
+[ -d ".archive/$D" ] || continue
+N=$((N + 1))
+ITEMS+=("$D")
+PATHS+=(".archive/$D")
+printf '%s) [archived] ' "$N"
+echo "$D"
+done < <(ls -1dt .archive/*/ 2>/dev/null)
+if [ "$N" -eq 0 ]; then
+echo "No sessions found."
+exit 0
+fi
+read -r -p "Delete #: " NUM
+if [ "$NUM" -gt 0 ] 2>/dev/null; then
+IDX=$((NUM - 1))
+TARGET="${PATHS[IDX]}"
+NAME="${ITEMS[IDX]}"
+if [ -n "$TARGET" ]; then
+printf 'Delete %s? [y/N]: ' "$NAME"
+read -r ANS
+case "$ANS" in
+y|Y)
+rm -rf "$TARGET"
+echo "Deleted."
+;;
+esac
+fi
+fi
+exit 0
+elif [ "$ACT" = "2" ]; then
+ITEMS=()
+N=0
+while IFS= read -r D; do
+[ -d "$D" ] || continue
+N=$((N + 1))
+ITEMS+=("$D")
+printf '%s) ' "$N"
+echo "$D"
+done < <(sorted_dirs)
+if [ "$N" -eq 0 ]; then
+echo "No active sessions."
+exit 0
+fi
+read -r -p "Archive #: " NUM
+if [ "$NUM" -gt 0 ] 2>/dev/null; then
+IDX=$((NUM - 1))
+NAME="${ITEMS[IDX]}"
+if [ -n "$NAME" ]; then
+if [ -e ".archive/$NAME" ]; then
+echo "Already archived."
+exit 1
+fi
+mv "$NAME" .archive/
+echo "Archived."
+fi
+fi
+exit 0
+elif [ "$ACT" = "3" ]; then
+ITEMS=()
+N=0
+while IFS= read -r D; do
+D="${D%/}"
+D="${D#.archive/}"
+[ -d ".archive/$D" ] || continue
+N=$((N + 1))
+ITEMS+=("$D")
+printf '%s) ' "$N"
+echo "$D"
+done < <(ls -1dt .archive/*/ 2>/dev/null)
+if [ "$N" -eq 0 ]; then
+echo "No archived sessions."
+exit 0
+fi
+read -r -p "Unarchive #: " NUM
+if [ "$NUM" -gt 0 ] 2>/dev/null; then
+IDX=$((NUM - 1))
+NAME="${ITEMS[IDX]}"
+if [ -n "$NAME" ]; then
+if [ -e "$NAME" ]; then
+echo "Active session with same name exists."
+exit 1
+fi
+mv ".archive/$NAME" .
+date +%s > "$NAME/.last"
+echo "Unarchived."
+fi
+fi
+exit 0
+else
+echo "Cancelled."
+exit 0
+fi
+fi
+
+LIST=()
+N=0
+while IFS= read -r D; do
+[ -d "$D" ] || continue
+N=$((N + 1))
+LIST+=("$D")
+printf '%s) ' "$N"
+echo "$D"
+done < <(sorted_dirs)
+
+SESSION="$CMD"
+if [ -z "$SESSION" ]; then
+read -r -p "Session name or # [default]: " SESSION
+fi
+SESSION="${SESSION:-default}"
+if [ "$SESSION" -gt 0 ] 2>/dev/null; then
+IDX=$((SESSION - 1))
+PICK="${LIST[IDX]}"
+if [ -n "$PICK" ]; then
+SESSION="$PICK"
+fi
+fi
+SESSION="${SESSION// /-}"
+SESSION="${SESSION//\//-}"
+
+mkdir -p "$SESSION"
+date +%s > "$SESSION/.last"
+printf '%s\n' "$SESSION" > .name
+W="/root/sessions/$SESSION"
+echo "{\"trustedWorkspaces\":[\"$W\"]}" > .t
+
+printf '%s\n' '#!/bin/bash
+[ -f /etc/profile ] && . /etc/profile
+if [ -f /root/.bash_profile ]; then
+. /root/.bash_profile
+fi
+[ -f /root/.bashrc ] && . /root/.bashrc
+export PATH="/root/.local/bin:$PATH"
+S=$(cat /root/sessions/.name)
+cd "/root/sessions/$S" || exit 1
+BRAIN=/root/.gemini/antigravity-cli/brain
+mkdir -p "$BRAIN"
+if [ -f .conv ]; then
+CID=$(cat .conv)
+/root/.local/bin/agy --conversation "$CID" --mode auto --settings /root/sessions/.t
+else
+ls -1 "$BRAIN" 2>/dev/null | sort > /tmp/b0
+(
+while true; do
+sleep 2
+ls -1 "$BRAIN" 2>/dev/null | sort > /tmp/b1
+NEW=$(comm -13 /tmp/b0 /tmp/b1 | head -n 1)
+if [ -n "$NEW" ]; then
+printf "%s\n" "$NEW" > .conv
+break
+fi
+done
+) &
+WPID=$!
+/root/.local/bin/agy --mode auto --settings /root/sessions/.t
+kill "$WPID" 2>/dev/null
+fi
+date +%s > .last' > .run-agy.sh
+
+B="$PWD:/root/sessions"
+A=(login fedora)
+A+=(--bind "$B")
+A+=(-- /bin/bash /root/sessions/.run-agy.sh)
+exec proot-distro "${A[@]}"
