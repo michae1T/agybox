@@ -73,6 +73,8 @@ cat << 'IGN' > .backupignore
 /.t
 /.ts
 /.run-agy.sh
+/.sync-agy.sh
+/.agy-state/**
 /.ex
 .venv/**
 venv/**
@@ -180,6 +182,39 @@ R=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
 printf 'tmp-%s\n' "$R"
 }
 
+write_sync_helper() {
+cat << 'SYN' > .sync-agy.sh
+#!/bin/bash
+SRC=/root/.gemini/antigravity-cli
+DST=/root/sessions/.agy-state
+if [ "$1" = "export" ]; then
+rm -rf "$DST"
+mkdir -p "$DST"
+for D in brain conversations knowledge; do
+if [ -d "$SRC/$D" ]; then
+cp -r "$SRC/$D" "$DST/$D" 2>/dev/null || true
+fi
+done
+if [ -f "$SRC/settings.json" ]; then
+cp "$SRC/settings.json" "$DST/settings.json" 2>/dev/null || true
+fi
+find "$DST" -name '*.lock' -delete 2>/dev/null || true
+chmod -R u+rwX "$DST" 2>/dev/null || true
+elif [ "$1" = "import" ]; then
+mkdir -p "$SRC"
+for D in brain conversations knowledge; do
+if [ -d "$DST/$D" ]; then
+mkdir -p "$SRC/$D"
+cp -ru "$DST/$D/." "$SRC/$D/" 2>/dev/null || cp -r "$DST/$D/." "$SRC/$D/" 2>/dev/null || true
+fi
+done
+if [ -f "$DST/settings.json" ] && [ ! -f "$SRC/settings.json" ]; then
+cp "$DST/settings.json" "$SRC/settings.json" 2>/dev/null || true
+fi
+fi
+SYN
+}
+
 if [ "$CMD" = "backup" ]; then
 if [ "$SUB" = "ignore" ]; then
 init_global_ignore
@@ -218,27 +253,28 @@ if [ "$SUB" = "auth" ]; then
 auth_drive || exit 1
 exit 0
 fi
-FED="$PREFIX/var/lib/proot-distro/installed-rootfs"
-AGY_CLI="$FED/fedora/root/.gemini/antigravity-cli"
-if [ -d "$AGY_CLI" ]; then
-if [ -d "$AGY_CLI/brain" ]; then
+write_sync_helper
+B="$PWD:/root/sessions"
+echo "Exporting Fedora chat history..."
+proot-distro login fedora --bind "$B" -- /bin/bash /root/sessions/.sync-agy.sh export
+if [ -d .agy-state/brain ]; then
 echo "Backing up transcripts to agy-drive:agy-backup/brain..."
-rclone_try rclone copy "$AGY_CLI/brain" agy-drive:agy-backup/brain -v || exit 1
+rclone_try rclone copy .agy-state/brain agy-drive:agy-backup/brain -v || { rm -rf .agy-state .sync-agy.sh; exit 1; }
 fi
-if [ -d "$AGY_CLI/conversations" ]; then
+if [ -d .agy-state/conversations ]; then
 echo "Backing up conversation state to agy-drive:agy-backup/conversations..."
-rclone_try rclone copy "$AGY_CLI/conversations" agy-drive:agy-backup/conversations -v || exit 1
+rclone_try rclone copy .agy-state/conversations agy-drive:agy-backup/conversations -v || { rm -rf .agy-state .sync-agy.sh; exit 1; }
 fi
-if [ -d "$AGY_CLI/knowledge" ]; then
-rclone_try rclone copy "$AGY_CLI/knowledge" agy-drive:agy-backup/knowledge -v || exit 1
+if [ -d .agy-state/knowledge ]; then
+rclone_try rclone copy .agy-state/knowledge agy-drive:agy-backup/knowledge -v || { rm -rf .agy-state .sync-agy.sh; exit 1; }
 fi
-if [ -f "$AGY_CLI/settings.json" ]; then
-rclone_try rclone copyto "$AGY_CLI/settings.json" agy-drive:agy-backup/settings.json -v || exit 1
+if [ -f .agy-state/settings.json ]; then
+rclone_try rclone copyto .agy-state/settings.json agy-drive:agy-backup/settings.json -v || { rm -rf .agy-state .sync-agy.sh; exit 1; }
 fi
-else
-echo "Note: Fedora agy state not found at $AGY_CLI"
-fi
+rm -rf .agy-state .sync-agy.sh
 build_excludes
+echo "/.agy-state/**" >> .ex
+echo "/.sync-agy.sh" >> .ex
 echo "Backing up sessions to agy-drive:agy-backup/sessions..."
 EX=(--exclude-from .ex --exclude-if-present .nobackup)
 rclone_try rclone copy . agy-drive:agy-backup/sessions "${EX[@]}" -v
@@ -251,18 +287,19 @@ fi
 
 if [ "$CMD" = "restore" ]; then
 ensure_drive
-FED="$PREFIX/var/lib/proot-distro/installed-rootfs"
-AGY_CLI="$FED/fedora/root/.gemini/antigravity-cli"
 echo "Restoring sessions from agy-drive:agy-backup/sessions..."
 rclone_try rclone copy agy-drive:agy-backup/sessions . -v || exit 1
-if [ -d "$FED/fedora/root" ]; then
-mkdir -p "$AGY_CLI/brain" "$AGY_CLI/conversations" "$AGY_CLI/knowledge"
+rm -rf .agy-state
+mkdir -p .agy-state/brain .agy-state/conversations .agy-state/knowledge
 echo "Restoring transcripts and conversation state..."
-rclone_try rclone copy agy-drive:agy-backup/brain "$AGY_CLI/brain" -v || exit 1
-rclone copy agy-drive:agy-backup/conversations "$AGY_CLI/conversations" -v 2>/dev/null || true
-rclone copy agy-drive:agy-backup/knowledge "$AGY_CLI/knowledge" -v 2>/dev/null || true
-rclone copyto agy-drive:agy-backup/settings.json "$AGY_CLI/settings.json" -v 2>/dev/null || true
-fi
+rclone_try rclone copy agy-drive:agy-backup/brain .agy-state/brain -v || { rm -rf .agy-state; exit 1; }
+rclone copy agy-drive:agy-backup/conversations .agy-state/conversations -v 2>/dev/null || true
+rclone copy agy-drive:agy-backup/knowledge .agy-state/knowledge -v 2>/dev/null || true
+rclone copyto agy-drive:agy-backup/settings.json .agy-state/settings.json -v 2>/dev/null || true
+write_sync_helper
+B="$PWD:/root/sessions"
+proot-distro login fedora --bind "$B" -- /bin/bash /root/sessions/.sync-agy.sh import
+rm -rf .agy-state .sync-agy.sh
 echo "Restore complete."
 exit 0
 fi
