@@ -3,14 +3,17 @@
 # Tracks per-session folders, last-used timestamps, workspace trust, and conversation IDs.
 
 CMD="${1:-}"
+SUB="${2:-}"
 case "$CMD" in
 -h|--help)
 echo "agy-android-proot - Run agy CLI in Fedora proot on Android (Termux)"
 echo "Usage:"
-echo "  agy-android-proot              List sessions by last used and prompt"
-echo "  agy-android-proot <name|#>     Start or resume session by name or #"
-echo "  agy-android-proot manage       Delete, archive, or unarchive a session"
-echo "  agy-android-proot --help       Show this help message"
+echo "  agy-android-proot                List sessions by last used and prompt"
+echo "  agy-android-proot <name|#>       Start or resume session by name or #"
+echo "  agy-android-proot manage         Delete, archive, or unarchive a session"
+echo "  agy-android-proot backup [auth]  Back up sessions and chats to Google Drive"
+echo "  agy-android-proot restore        Restore sessions and chats from Google Drive"
+echo "  agy-android-proot --help         Show this help message"
 exit 0
 ;;
 esac
@@ -18,6 +21,80 @@ esac
 cd || exit 1
 mkdir -p sessions
 cd sessions || exit 1
+
+ensure_rclone() {
+if ! command -v rclone >/dev/null 2>&1; then
+echo "Installing rclone..."
+pkg install -y rclone || exit 1
+fi
+export BROWSER=termux-open-url
+}
+
+auth_drive() {
+if rclone listremotes 2>/dev/null | grep -qx 'agy-drive:'; then
+echo "Reconnecting agy-drive in browser..."
+rclone config reconnect agy-drive:
+else
+echo "Opening browser to authorize Google Drive (drive.file scope)..."
+rclone config create agy-drive drive scope=drive.file
+fi
+}
+
+ensure_drive() {
+ensure_rclone
+if ! rclone listremotes 2>/dev/null | grep -qx 'agy-drive:'; then
+auth_drive || exit 1
+fi
+}
+
+rclone_try() {
+"$@" && return 0
+read -r -p "Drive transfer failed. Re-authorize in browser? [y/N]: " REAUTH
+case "$REAUTH" in
+y|Y)
+auth_drive || return 1
+"$@"
+;;
+*)
+return 1
+;;
+esac
+}
+
+if [ "$CMD" = "backup" ]; then
+ensure_drive
+if [ "$SUB" = "auth" ]; then
+auth_drive || exit 1
+exit 0
+fi
+FED="$PREFIX/var/lib/proot-distro/installed-rootfs"
+BRAIN="$FED/fedora/root/.gemini/antigravity-cli/brain"
+EX=(--exclude .name --exclude .t)
+EX+=(--exclude .ts --exclude .run-agy.sh)
+echo "Backing up sessions to agy-drive:agy-backup/sessions..."
+rclone_try rclone copy . agy-drive:agy-backup/sessions "${EX[@]}" -v || exit 1
+if [ -d "$BRAIN" ]; then
+echo "Backing up transcripts to agy-drive:agy-backup/brain..."
+rclone_try rclone copy "$BRAIN" agy-drive:agy-backup/brain -v || exit 1
+fi
+echo "Backup complete."
+exit 0
+fi
+
+if [ "$CMD" = "restore" ]; then
+ensure_drive
+FED="$PREFIX/var/lib/proot-distro/installed-rootfs"
+BRAIN="$FED/fedora/root/.gemini/antigravity-cli/brain"
+echo "Restoring sessions from agy-drive:agy-backup/sessions..."
+rclone_try rclone copy agy-drive:agy-backup/sessions . -v || exit 1
+if [ -d "$FED/fedora/root" ]; then
+mkdir -p "$BRAIN"
+echo "Restoring transcripts from agy-drive:agy-backup/brain..."
+rclone_try rclone copy agy-drive:agy-backup/brain "$BRAIN" -v || exit 1
+fi
+echo "Restore complete."
+exit 0
+fi
 
 sorted_dirs() {
 for D in */; do
