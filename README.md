@@ -77,6 +77,7 @@ directory over Android's Storage Access Framework (`DocumentsProvider`):
 
 ```text
 agybox install                # install agybox and agyb shortcut into PATH
+agyb upgrade                  # update agybox from GitHub main
 agyb                          # list sessions by last used and prompt
 agyb <name|#>                 # start or resume session by name or number
 agyb manage                   # delete, archive (.archive/), or unarchive a session

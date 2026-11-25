@@ -56,6 +56,7 @@ echo "  agybox backup auth         Re-authorize Google Drive in browser"
 echo "  agybox backup ignore [id]  Edit global or session .backupignore"
 echo "  agybox restore             Restore brain + sessions from Google Drive"
 echo "  agybox install             Install agybox and agyb shortcut into PATH"
+echo "  agybox upgrade             Update agybox from GitHub main"
 echo "  agybox --help              Show this help message"
 echo "Env vars:"
 echo "  AGYBOX_DIR       Base folder (default: ~/Documents/agybox)"
@@ -88,6 +89,52 @@ termux-fix-shebang "$BIN/agybox"
 fi
 ln -sf "$BIN/agybox" "$BIN/agyb"
 echo "Installed $BIN/agybox and $BIN/agyb"
+exit 0
+fi
+
+if [ "$CMD" = "upgrade" ] || [ "$CMD" = "update" ]; then
+URL="${AGYBOX_REPO_URL:-https://raw.githubusercontent.com/michae1T/agybox/main/agybox}"
+TMPF=$(mktemp 2>/dev/null || echo "$HOME/.agybox.upgrade")
+echo "Downloading latest agybox from $URL..."
+if command -v curl >/dev/null 2>&1; then
+curl -fsSL "$URL" -o "$TMPF" || { rm -f "$TMPF"; exit 1; }
+elif command -v wget >/dev/null 2>&1; then
+wget -qO "$TMPF" "$URL" || { rm -f "$TMPF"; exit 1; }
+else
+echo "curl or wget is required to upgrade."
+rm -f "$TMPF"
+exit 1
+fi
+if [ ! -s "$TMPF" ] || ! head -n 1 "$TMPF" | grep -q 'bash' || ! bash -n "$TMPF"; then
+echo "Downloaded file failed validation; aborting upgrade."
+rm -f "$TMPF"
+exit 1
+fi
+chmod +x "$TMPF"
+if is_termux && command -v termux-fix-shebang >/dev/null 2>&1; then
+termux-fix-shebang "$TMPF"
+fi
+SELF_ABS=$(readlink -f "$SELF" 2>/dev/null || echo "$SELF")
+if [ -w "$SELF_ABS" ] || [ -w "$(dirname "$SELF_ABS")" ]; then
+mv -f "$TMPF" "$SELF_ABS"
+echo "Upgraded $SELF_ABS"
+if is_termux; then
+BIN="$PREFIX/bin"
+else
+BIN="$HOME/.local/bin"
+fi
+if [ -d "$BIN" ] && [ "$SELF_ABS" != "$BIN/agybox" ]; then
+cp "$SELF_ABS" "$BIN/agybox"
+chmod +x "$BIN/agybox"
+fi
+if [ -d "$BIN" ]; then
+ln -sf "$BIN/agybox" "$BIN/agyb"
+fi
+else
+echo "Cannot write to $SELF_ABS"
+rm -f "$TMPF"
+exit 1
+fi
 exit 0
 fi
 
@@ -332,6 +379,31 @@ fi
 touch "$GSTATE/.fedora-ready"
 }
 
+read_session_ts() {
+DIR="$1"
+TS=""
+if [ -f "$DIR/.last" ]; then
+read -r TS < "$DIR/.last"
+TS="${TS//[!0-9]/}"
+fi
+if [ -z "$TS" ] && [ -f "$DIR/.conv" ]; then
+CID=$(cat "$DIR/.conv" 2>/dev/null)
+CID="${CID//[$'\r\n ']/}"
+TLOG="$GSTATE/antigravity-cli/brain/$CID/.system_generated/logs/transcript.jsonl"
+if [ -n "$CID" ] && [ -f "$TLOG" ]; then
+ISO=$(grep -o '"created_at":"[^"]*"' "$TLOG" 2>/dev/null | tail -n 1 | cut -d'"' -f4)
+if [ -n "$ISO" ]; then
+TS=$(date -d "$ISO" +%s 2>/dev/null || true)
+TS="${TS//[!0-9]/}"
+if [ -n "$TS" ]; then
+printf '%s\n' "$TS" > "$DIR/.last"
+fi
+fi
+fi
+fi
+echo "${TS:-0}"
+}
+
 sorted_dirs() {
 BASE="${1:-.}"
 [ -d "$BASE" ] || return 0
@@ -340,15 +412,7 @@ cd "$BASE" || exit 0
 for D in */; do
 [ -d "$D" ] || continue
 D="${D%/}"
-TS=0
-if [ -f "$D/.last" ]; then
-read -r TS < "$D/.last"
-else
-stat -c %Y "$D" > .ts 2>/dev/null
-read -r TS < .ts
-rm -f .ts
-fi
-TS="${TS:-0}"
+TS=$(read_session_ts "$D")
 printf '%s ' "$TS"
 echo "$D"
 done | sort -rn | cut -d' ' -f2-
@@ -432,23 +496,24 @@ if proot-distro login fedora -- true >/dev/null 2>&1; then
 migrate_proot_state
 fi
 fi
+RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime -v)
 CLI_STATE="$GSTATE/antigravity-cli"
 for D in brain conversations knowledge; do
 if [ -d "$CLI_STATE/$D" ]; then
 echo "Backing up $D to agy-drive:agy-backup/$D..."
-rclone_try rclone copy "$CLI_STATE/$D" "agy-drive:agy-backup/$D" --exclude '*.lock' -v || exit 1
+rclone_try rclone copy "$CLI_STATE/$D" "agy-drive:agy-backup/$D" --exclude '*.lock' "${RC_FLAGS[@]}" || exit 1
 fi
 done
 if [ -f "$CLI_STATE/settings.json" ]; then
-rclone_try rclone copyto "$CLI_STATE/settings.json" agy-drive:agy-backup/settings.json -v || exit 1
+rclone_try rclone copyto "$CLI_STATE/settings.json" agy-drive:agy-backup/settings.json "${RC_FLAGS[@]}" || exit 1
 fi
 if [ -d "$GSTATE/config" ]; then
-rclone_try rclone copy "$GSTATE/config" agy-drive:agy-backup/config -v || exit 1
+rclone_try rclone copy "$GSTATE/config" agy-drive:agy-backup/config "${RC_FLAGS[@]}" || exit 1
 fi
 build_excludes
 echo "Backing up sessions to agy-drive:agy-backup/sessions..."
 EX=(--exclude-from .ex --exclude-if-present .nobackup)
-rclone_try rclone copy . agy-drive:agy-backup/sessions "${EX[@]}" -v
+rclone_try rclone copy . agy-drive:agy-backup/sessions "${EX[@]}" "${RC_FLAGS[@]}"
 RC=$?
 rm -f .ex
 [ "$RC" -eq 0 ] || exit 1
@@ -463,15 +528,19 @@ if proot-distro login fedora -- true >/dev/null 2>&1; then
 migrate_proot_state
 fi
 fi
+RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime -v)
 CLI_STATE="$GSTATE/antigravity-cli"
 echo "Restoring sessions from agy-drive:agy-backup/sessions..."
-rclone_try rclone copy agy-drive:agy-backup/sessions . -v || exit 1
+rclone_try rclone copy agy-drive:agy-backup/sessions . "${RC_FLAGS[@]}" || exit 1
 echo "Restoring brain and conversation state..."
-rclone_try rclone copy agy-drive:agy-backup/brain "$CLI_STATE/brain" -v || exit 1
-rclone copy agy-drive:agy-backup/conversations "$CLI_STATE/conversations" -v 2>/dev/null || true
-rclone copy agy-drive:agy-backup/knowledge "$CLI_STATE/knowledge" -v 2>/dev/null || true
-rclone copy agy-drive:agy-backup/config "$GSTATE/config" -v 2>/dev/null || true
-rclone copyto agy-drive:agy-backup/settings.json "$CLI_STATE/settings.json" -v 2>/dev/null || true
+rclone_try rclone copy agy-drive:agy-backup/brain "$CLI_STATE/brain" "${RC_FLAGS[@]}" || exit 1
+rclone copy agy-drive:agy-backup/conversations "$CLI_STATE/conversations" "${RC_FLAGS[@]}" 2>/dev/null || true
+rclone copy agy-drive:agy-backup/knowledge "$CLI_STATE/knowledge" "${RC_FLAGS[@]}" 2>/dev/null || true
+rclone copy agy-drive:agy-backup/config "$GSTATE/config" "${RC_FLAGS[@]}" 2>/dev/null || true
+rclone copyto agy-drive:agy-backup/settings.json "$CLI_STATE/settings.json" "${RC_FLAGS[@]}" 2>/dev/null || true
+for BASE in . .tmp .archive; do
+sorted_dirs "$BASE" >/dev/null
+done
 echo "Restore complete."
 exit 0
 fi
