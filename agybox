@@ -170,9 +170,9 @@ rclone config reconnect agy-drive:
 else
 echo "Opening browser to authorize Google Drive (drive.file scope)..."
 if [ -n "$CID" ]; then
-rclone config create agy-drive drive scope=drive.file client_id "$CID" client_secret "$CSEC"
+rclone config create agy-drive drive scope drive.file client_id "$CID" client_secret "$CSEC"
 else
-rclone config create agy-drive drive scope=drive.file
+rclone config create agy-drive drive scope drive.file
 fi
 fi
 }
