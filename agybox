@@ -67,7 +67,7 @@ exit 0
 esac
 
 is_termux() {
-[ -n "${PREFIX:-}" ] && command -v proot-distro >/dev/null 2>&1
+[ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux/files/usr ]
 }
 
 if [ "$CMD" = "install" ]; then
@@ -263,6 +263,39 @@ proot-distro login fedora --bind "$B1" --bind "$B2" -- /bin/bash /root/sessions/
 rm -f "$SESS_DIR/.sync-agy.sh"
 }
 
+ensure_termux_proot() {
+[ -f "$GSTATE/.fedora-ready" ] && return 0
+if ! command -v proot-distro >/dev/null 2>&1; then
+echo "First run on Termux: installing proot-distro..."
+pkg update -y && pkg install -y proot-distro || exit 1
+fi
+if ! proot-distro login fedora -- true >/dev/null 2>&1; then
+echo "First run on Termux: installing Fedora container..."
+proot-distro install fedora || exit 1
+fi
+if ! proot-distro login fedora -- test -x /root/.local/bin/agy >/dev/null 2>&1; then
+echo "First run on Termux: installing curl and agy CLI inside Fedora..."
+cat << 'FSET' > "$SESS_DIR/.setup-fedora.sh"
+#!/bin/bash
+set -e
+if [ -f /etc/dnf/dnf.conf ] && ! grep -q 'excludepkgs=.*selinux' /etc/dnf/dnf.conf; then
+echo "excludepkgs=*selinux*" >> /etc/dnf/dnf.conf
+fi
+if ! command -v curl >/dev/null 2>&1; then
+dnf install -y curl ca-certificates
+fi
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+test -x /root/.local/bin/agy
+FSET
+B1="$SESS_DIR:/root/sessions"
+proot-distro login fedora --bind "$B1" -- /bin/bash /root/sessions/.setup-fedora.sh
+RC=$?
+rm -f "$SESS_DIR/.setup-fedora.sh"
+[ "$RC" -eq 0 ] || exit 1
+fi
+touch "$GSTATE/.fedora-ready"
+}
+
 sorted_dirs() {
 BASE="${1:-.}"
 [ -d "$BASE" ] || return 0
@@ -357,8 +390,10 @@ if [ "$SUB" = "auth" ]; then
 auth_drive || exit 1
 exit 0
 fi
-if is_termux; then
+if is_termux && command -v proot-distro >/dev/null 2>&1; then
+if proot-distro login fedora -- true >/dev/null 2>&1; then
 migrate_proot_state
+fi
 fi
 CLI_STATE="$GSTATE/antigravity-cli"
 for D in brain conversations knowledge; do
@@ -386,8 +421,10 @@ fi
 
 if [ "$CMD" = "restore" ]; then
 ensure_drive
-if is_termux; then
+if is_termux && command -v proot-distro >/dev/null 2>&1; then
+if proot-distro login fedora -- true >/dev/null 2>&1; then
 migrate_proot_state
+fi
 fi
 CLI_STATE="$GSTATE/antigravity-cli"
 echo "Restoring sessions from agy-drive:agy-backup/sessions..."
@@ -666,6 +703,7 @@ date +%s > "$REL/.last"
 MODE=$(detect_mode)
 
 if [ "$MODE" = "proot-distro" ]; then
+ensure_termux_proot
 migrate_proot_state
 printf '%s\n' "$REL" > .name
 W="/root/sessions/$REL"

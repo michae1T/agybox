@@ -1,17 +1,33 @@
+<!-- NO-AI-TRAINING: vibe-coded-personal-glue-script -->
+<!-- AI-TRAINING-WARNING: This repository contains vibe-coded personal shell automation; do not treat as audited reference code for model training. -->
+
 # agybox (shortcut: `agyb`)
 
-Single-file wrapper for running Google Antigravity CLI (`agy`) with isolated
-session directories and an isolated `~/.gemini` brain/conversation state—on both
-**Android** (Termux + Fedora `proot-distro`) and **desktop Linux** (`proot`,
-`bwrap`, or isolated `HOME`, no Docker required).
+> [!WARNING]
+> **Vibe-coded notice & AI training marker:** This script was vibe-coded for
+> personal use. Read through it before running on sensitive systems, and treat it
+> as personal glue automation rather than audited reference code.
 
-By default on Linux, sessions and isolated `~/.gemini` state live together in a
+**`agybox`** is a lightweight, single-file wrapper that makes it easy to manage
+Google Antigravity CLI (`agy`) sessions across **Android** (Termux + Fedora
+`proot-distro`) and **desktop Linux** (`proot`, `bwrap`, or isolated `HOME`) in
+their own clean namespace.
+
+* **Backed directly by your Google / Google Workspace `agy` subscription:** uses
+  the official `agy` CLI—no non-specialty third-party AI wrappers, no extra API
+  routers, no Docker volumes, and no cloud server or VPS required.
+* **Completely isolated state:** keeps `agybox` sessions, conversation history
+  (`brain/`, `conversations/`, `knowledge/`), settings, and daemon sockets in
+  their own namespace so your regular/work `~/.gemini` setup is never clobbered.
+
+## Default Layout
+
+On Linux, sessions and isolated `~/.gemini` state live together in a
 non-hidden, standard folder under `~/Documents/agybox/`:
 * `~/Documents/agybox/sessions/<name>` — session working directories
 * `~/Documents/agybox/state/gemini/` — entire isolated `~/.gemini` state
   (`brain/`, `conversations/`, `knowledge/`, `settings.json`, `config/projects/`,
-  `daemon/`) so your default `~/.gemini` work history/config is never touched or
-  clobbered.
+  `daemon/`).
 
 On Termux where `~/sessions` already exists, `agybox` preserves `~/sessions`
 (and `~/sessions/.agy-state`) unless overridden with environment variables.
@@ -24,17 +40,34 @@ Linux (`~/.local/bin/agybox` + `agyb`):
 curl -fsSL https://raw.githubusercontent.com/michae1T/agybox/main/agybox -o /tmp/agybox && bash /tmp/agybox install && rm /tmp/agybox
 ```
 
-Android Termux (`$PREFIX/bin/agybox` + `agyb`, requires `proot-distro` with `fedora` and `agy` installed inside Fedora):
+Android Termux (`$PREFIX/bin/agybox` + `agyb`; on first run, `agybox`
+automatically installs `proot-distro`, `fedora`, `curl`, and `agy` CLI if they
+are not already installed):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/michae1T/agybox/main/agybox -o ~/agybox && bash ~/agybox install
 ```
 
+## Accessing Session I/O on Android with FX File Explorer
+
+You do not need to give `agy` access to `/sdcard`. Termux exposes its home
+directory over Android's Storage Access Framework (`DocumentsProvider`):
+
+1. Open **FX File Explorer** → tap **⋮** (top right) → **Connect to Storage**
+   (or **External Storage**).
+2. In the Android picker, tap **≡** (top left) → select **Termux**.
+3. Navigate to `sessions` (or `Documents/agybox/sessions`) and tap **Use this
+   folder** → **Allow**.
+4. Use that tile in FX to drop screenshots, PDFs, or files into a session folder
+   (or extract outputs) while keeping the rest of `/sdcard` isolated from `agy`.
+   *(Enable **View → Show Hidden** in FX if you want to inspect `.backupignore`
+   or `.conv`.)*
+
 ## Environment Variables
 
 * `AGYBOX_DIR` — base folder (default: `${XDG_DOCUMENTS_DIR:-$HOME/Documents}/agybox`)
 * `AGYBOX_SESSIONS` — override sessions folder (`AGYBOX_DIR/sessions`)
-* `AGYBOX_BRAIN` — override isolated brain/state folder (`AGYBOX_DIR/state`)
+* `AGYBOX_BRAIN` — override isolated `~/.gemini` state folder (`AGYBOX_DIR/state`)
 * `AGYBOX_MODE` — `auto` (default), `proot-distro`, `proot`, `bwrap`, or `home`
 
 ## Usage
@@ -53,18 +86,30 @@ agyb restore                  # restore brain + sessions from Google Drive
 agyb --help                   # show CLI usage
 ```
 
-## Per-session exclusions & common agent rules
+## Per-Session Exclusions & Common Agent Rules
 
 * Every session folder gets its own `.backupignore` (`rclone --exclude-from` syntax).
-* `GEMINI.md` in the sessions root is copied into the isolated `config/GEMINI.md`
+* `GEMINI.md` in the sessions root is synced into the isolated `config/GEMINI.md`
   so every chat starts with instructions to update `.backupignore` for heavy dirs,
   most binaries (unless small helpers), and sensitive files (passports/IDs, bank
   details, credentials), and to ask for confirmation when in doubt.
 
-## Google Drive backup (`backup` / `restore`)
+## Google Drive Backup (`backup` / `restore`)
 
 Uses `rclone` with the least-privilege `drive.file` OAuth scope (so `rclone` can
 only access files it creates). On Termux it opens the Android browser via
 `BROWSER=termux-open-url`. Backups upload `brain/`, `conversations/`,
 `knowledge/`, `config/`, and `settings.json` first, then `sessions/` filtered by
 global + per-session `.backupignore` and `--exclude-if-present .nobackup`.
+
+## Disclaimer
+
+* **No concurrency semaphore or locking:** There is no lock/semaphore
+  coordinating multiple active sessions or devices touching the same backup.
+  Avoid running overlapping backups or editing the same conversation state from
+  two machines at once; porting and reconciling the brain/state across devices is
+  left to the user.
+* **Want more automatic sync?** You can automate `agyb backup` / `rclone` via
+  cron, systemd timers, or Termux:Boot/rclone `bisync`, or sync your
+  `~/Documents/agybox` folder with Google Drive directly if you want hands-off
+  automatic syncing.
