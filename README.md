@@ -107,18 +107,18 @@ only access files it creates). On Termux it opens the Android browser via
 
 Backup modes (`agyb backup [minimal|minimal-mcp|verbose]` or `AGYBOX_BACKUP_MODE`):
 * **`minimal` (default):** Backs up `sessions/` (filtered by `.backupignore`),
-  `conversations/`, `settings.json`, `config/`, and `brain/` while skipping
-  heavy cache/scratch directories (`steps/**`, `logs/chunks/**`,
-  `logs/media/**`, `transcript_full.jsonl`, `tasks/**`, `messages/**`,
-  `scratch/**`)—keeping `transcript.jsonl` and artifacts without hundreds of
-  tiny step files or cached media. Also writes a notice into `config/AGENTS.md`
-  so the agent knows deep cached tool outputs/media/scratch may be absent after
-  a restore.
-* **`minimal-mcp`:** Everything in `minimal` plus `mcp/` configs so MCP servers
-  keep working across restores.
+  `conversations/`, `settings.json`, a `config/AGENTS.md` notice (pruning the
+  rest of `config/`), and `brain/` while skipping heavy cache/scratch
+  directories (`steps/**`, `logs/chunks/**`, `logs/media/**`,
+  `transcript_full.jsonl`, `tasks/**`, `messages/**`, `scratch/**`)—keeping
+  `transcript.jsonl` and artifacts without hundreds of tiny step files or
+  cached media. `config/AGENTS.md` lets the agent know deep cached tool
+  outputs/media/scratch may be absent after a restore.
+* **`minimal-mcp`:** Everything in `minimal` plus `mcp/` and `config/mcp*` so
+  MCP servers keep working across restores.
 * **`verbose`:** Full backup including `steps/`, `chunks/`, `media/`,
-  `transcript_full.jsonl`, `tasks/`, `messages/`, `scratch/`, `knowledge/`, and
-  `mcp/`.
+  `transcript_full.jsonl`, `tasks/`, `messages/`, `scratch/`, `knowledge/`,
+  `mcp/`, and all of `config/`.
 
 ### Custom Google Drive `client_id` (recommended)
 

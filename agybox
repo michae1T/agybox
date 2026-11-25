@@ -443,13 +443,10 @@ esac
 done
 for BASE in . .tmp .archive; do
 [ -d "$BASE" ] || continue
-while IFS= read -r D; do
-if [ "$BASE" = "." ]; then
-P="$D"
-else
-P="$BASE/$D"
-fi
-[ -d "$P" ] || continue
+for D in "$BASE"/*/; do
+[ -d "$D" ] || continue
+D="${D%/}"
+P="${D#./}"
 init_session_ignore "$P"
 while IFS= read -r L; do
 L="${L%$'\r'}"
@@ -462,7 +459,7 @@ echo "$L" >> .ex
 printf '/%s/**/' "$P" >> .ex
 echo "$L" >> .ex
 done < "$P/.backupignore"
-done < <(sorted_dirs "$BASE")
+done
 done
 }
 
@@ -519,7 +516,7 @@ if proot-distro login fedora -- true >/dev/null 2>&1; then
 migrate_proot_state
 fi
 fi
-RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime --skip-links -v)
+RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime --skip-links --fast-list --checkers 16 --transfers 8 -v)
 CLI_STATE="$GSTATE/antigravity-cli"
 BRAIN_EX=(--exclude '*.lock')
 if [ "$BMODE" != "verbose" ]; then
@@ -551,11 +548,17 @@ echo "Backing up knowledge to agy-drive:agy-backup/knowledge..."
 rclone_try rclone copy "$CLI_STATE/knowledge" agy-drive:agy-backup/knowledge --exclude '*.lock' "${RC_FLAGS[@]}" || exit 1
 fi
 if [ -f "$CLI_STATE/settings.json" ]; then
-rclone_try rclone copyto "$CLI_STATE/settings.json" agy-drive:agy-backup/settings.json "${RC_FLAGS[@]}" || exit 1
+echo "Backing up settings.json..."
+rclone_try rclone copyto "$CLI_STATE/settings.json" agy-drive:agy-backup/settings.json --no-traverse "${RC_FLAGS[@]}" || exit 1
 fi
 if [ "$BMODE" = "verbose" ]; then
 rm -f "$GSTATE/config/AGENTS.md"
+if [ -d "$GSTATE/config" ]; then
+echo "Backing up config to agy-drive:agy-backup/config..."
+rclone_try rclone copy "$GSTATE/config" agy-drive:agy-backup/config "${RC_FLAGS[@]}" || exit 1
+fi
 else
+mkdir -p "$GSTATE/config"
 cat << 'AMD' > "$GSTATE/config/AGENTS.md"
 # Backup Mode Notice (Minimal Brain State)
 
@@ -569,9 +572,13 @@ If this environment was restored from Drive, the following `brain/<id>/` subdire
 
 You still have the resumed conversation state (`conversations/`), `transcript.jsonl`, and all non-ignored files in the session workspace. If you try to look up an older truncated tool output or scratch file and it is missing on disk, assume it was trimmed by minimal backup rather than deleted accidentally, and re-run the check or ask the user if needed.
 AMD
+if [ "$BMODE" = "minimal-mcp" ]; then
+echo "Backing up config (AGENTS.md + mcp) to agy-drive:agy-backup/config..."
+rclone_try rclone copy "$GSTATE/config" agy-drive:agy-backup/config --filter '+ /AGENTS.md' --filter '+ /mcp*' --filter '+ /mcp/**' --filter '- **' "${RC_FLAGS[@]}" || exit 1
+else
+echo "Backing up AGENTS.md notice..."
+rclone_try rclone copyto "$GSTATE/config/AGENTS.md" agy-drive:agy-backup/config/AGENTS.md --no-traverse "${RC_FLAGS[@]}" || exit 1
 fi
-if [ -d "$GSTATE/config" ]; then
-rclone_try rclone copy "$GSTATE/config" agy-drive:agy-backup/config "${RC_FLAGS[@]}" || exit 1
 fi
 build_excludes
 echo "Backing up sessions to agy-drive:agy-backup/sessions..."
@@ -591,7 +598,7 @@ if proot-distro login fedora -- true >/dev/null 2>&1; then
 migrate_proot_state
 fi
 fi
-RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime --skip-links -v)
+RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime --skip-links --fast-list --checkers 16 --transfers 8 -v)
 CLI_STATE="$GSTATE/antigravity-cli"
 echo "Restoring sessions from agy-drive:agy-backup/sessions..."
 rclone_try rclone copy agy-drive:agy-backup/sessions . "${RC_FLAGS[@]}" || exit 1
