@@ -428,6 +428,19 @@ printf 'tmp-%s\n' "$R"
 build_excludes() {
 init_global_ignore
 cat .backupignore > .ex
+printf '\n' >> .ex
+for PAT in '/.name' '/.t' '/.ts' '/.run-agy.sh' '/.sync-agy.sh' '/.setup-fedora.sh' '/.agy-state/**' '/.ex'; do
+printf '%s\n' "$PAT" >> .ex
+done
+SESS_NORM="${SESS_DIR%/}"
+for SP in "$BRAIN_DIR" "$GSTATE"; do
+case "$SP" in
+"$SESS_NORM"/*)
+REL_S="${SP#"$SESS_NORM/"}"
+printf '/%s/**\n' "$REL_S" >> .ex
+;;
+esac
+done
 for BASE in . .tmp .archive; do
 [ -d "$BASE" ] || continue
 while IFS= read -r D; do
@@ -506,7 +519,7 @@ if proot-distro login fedora -- true >/dev/null 2>&1; then
 migrate_proot_state
 fi
 fi
-RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime -v)
+RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime --skip-links -v)
 CLI_STATE="$GSTATE/antigravity-cli"
 BRAIN_EX=(--exclude '*.lock')
 if [ "$BMODE" != "verbose" ]; then
@@ -577,7 +590,7 @@ if proot-distro login fedora -- true >/dev/null 2>&1; then
 migrate_proot_state
 fi
 fi
-RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime -v)
+RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime --skip-links -v)
 CLI_STATE="$GSTATE/antigravity-cli"
 echo "Restoring sessions from agy-drive:agy-backup/sessions..."
 rclone_try rclone copy agy-drive:agy-backup/sessions . "${RC_FLAGS[@]}" || exit 1
