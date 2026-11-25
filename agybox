@@ -458,7 +458,7 @@ build_excludes() {
 init_global_ignore
 cat .backupignore > .ex
 printf '\n' >> .ex
-for PAT in '/.name' '/.t' '/.ts' '/.run-agy.sh' '/.sync-agy.sh' '/.setup-fedora.sh' '/.agy-state/**' '/.ex'; do
+for PAT in '/.name' '/.t' '/.ts' '/.run-agy.sh' '/.sync-agy.sh' '/.setup-fedora.sh' '/.agy-state/**' '/.ex' '.migrated' '.fedora-ready'; do
 printf '%s\n' "$PAT" >> .ex
 done
 SESS_NORM="${SESS_DIR%/}"
@@ -547,7 +547,7 @@ fi
 fi
 RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime --skip-links --fast-list --checkers 16 --transfers 8 -v)
 CLI_STATE="$GSTATE/antigravity-cli"
-BRAIN_EX=(--exclude '*.lock')
+BRAIN_EX=(--exclude '*.lock' --exclude '.migrated' --exclude '.fedora-ready')
 if [ "$BMODE" != "verbose" ]; then
 BRAIN_EX+=(--exclude '**/.system_generated/steps/**')
 BRAIN_EX+=(--exclude '**/.system_generated/logs/chunks/**')
