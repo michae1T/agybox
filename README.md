@@ -69,6 +69,9 @@ directory over Android's Storage Access Framework (`DocumentsProvider`):
 * `AGYBOX_SESSIONS` — override sessions folder (`AGYBOX_DIR/sessions`)
 * `AGYBOX_BRAIN` — override isolated `~/.gemini` state folder (`AGYBOX_DIR/state`)
 * `AGYBOX_MODE` — `auto` (default), `proot-distro`, `proot`, `bwrap`, or `home`
+* `AGYBOX_DRIVE_CLIENT_ID` / `AGYBOX_DRIVE_CLIENT_SECRET` — optional custom Google
+  Drive OAuth Desktop app credentials (or enter interactively during `backup` /
+  `backup auth`)
 
 ## Usage
 
@@ -101,6 +104,25 @@ only access files it creates). On Termux it opens the Android browser via
 `BROWSER=termux-open-url`. Backups upload `brain/`, `conversations/`,
 `knowledge/`, `config/`, and `settings.json` first, then `sessions/` filtered by
 global + per-session `.backupignore` and `--exclude-if-present .nobackup`.
+
+### Custom Google Drive `client_id` (recommended)
+
+`rclone`'s built-in shared Google Drive `client_id` is being retired during
+2026 (see [rclone docs](https://rclone.org/drive/#making-your-own-client-id)). To
+use your own:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create/select a
+   project and enable the **Google Drive API**.
+2. Under **OAuth consent screen**, choose **External**, add yourself as a test
+   user (or click **Publish App** → **In Production** so refresh tokens don't
+   expire every 7 days).
+3. Under **Credentials → Create Credentials → OAuth client ID**, pick **Desktop
+   app** to get your `client_id` and `client_secret`.
+4. Run `agyb backup auth` (or set `AGYBOX_DRIVE_CLIENT_ID` and
+   `AGYBOX_DRIVE_CLIENT_SECRET`) and enter them when prompted.
+5. Because `drive.file` isolates access per `client_id`, run `agyb backup` once
+   after switching so your new `client_id` creates and owns the `agy-backup/`
+   folder on Drive.
 
 ## Disclaimer
 
