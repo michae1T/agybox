@@ -539,6 +539,23 @@ fi
 if [ -f "$CLI_STATE/settings.json" ]; then
 rclone_try rclone copyto "$CLI_STATE/settings.json" agy-drive:agy-backup/settings.json "${RC_FLAGS[@]}" || exit 1
 fi
+if [ "$BMODE" = "verbose" ]; then
+rm -f "$GSTATE/config/AGENTS.md"
+else
+cat << 'AMD' > "$GSTATE/config/AGENTS.md"
+# Backup Mode Notice (Minimal Brain State)
+
+This `agybox` state is backed up in `minimal` / `minimal-mcp` mode to avoid uploading hundreds of cached tool-output files.
+If this environment was restored from Drive, the following `brain/<id>/` subdirectories were intentionally omitted:
+- `.system_generated/steps/`
+- `.system_generated/logs/chunks/`
+- `.system_generated/logs/transcript_full.jsonl`
+- `.system_generated/tasks/` and `.system_generated/messages/`
+- `scratch/`
+
+You still have the resumed conversation state (`conversations/`), `transcript.jsonl`, and all non-ignored files in the session workspace. If you try to look up an older truncated tool output or scratch file and it is missing on disk, assume it was trimmed by minimal backup rather than deleted accidentally, and re-run the check or ask the user if needed.
+AMD
+fi
 if [ -d "$GSTATE/config" ]; then
 rclone_try rclone copy "$GSTATE/config" agy-drive:agy-backup/config "${RC_FLAGS[@]}" || exit 1
 fi
