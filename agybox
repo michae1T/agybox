@@ -51,7 +51,7 @@ echo "  agybox <name|#>            Start or resume session by name or #"
 echo "  agybox manage              Delete, archive, or unarchive a session"
 echo "  agybox temp [new|#]        Create or resume a temp session (.tmp/)"
 echo "  agybox temp manage         Promote or delete a temp session"
-echo "  agybox backup              Back up brain + sessions to Google Drive"
+echo "  agybox backup [mode]       Back up to Drive (minimal | minimal-mcp | verbose)"
 echo "  agybox backup auth         Re-authorize Google Drive in browser"
 echo "  agybox backup ignore [id]  Edit global or session .backupignore"
 echo "  agybox restore             Restore brain + sessions from Google Drive"
@@ -59,10 +59,11 @@ echo "  agybox install             Install agybox and agyb shortcut into PATH"
 echo "  agybox upgrade             Update agybox from GitHub main"
 echo "  agybox --help              Show this help message"
 echo "Env vars:"
-echo "  AGYBOX_DIR       Base folder (default: ~/Documents/agybox)"
-echo "  AGYBOX_SESSIONS  Sessions folder (default: AGYBOX_DIR/sessions)"
-echo "  AGYBOX_BRAIN     Isolated ~/.gemini state folder (default: AGYBOX_DIR/state)"
-echo "  AGYBOX_MODE      auto | proot-distro | proot | bwrap | home"
+echo "  AGYBOX_DIR          Base folder (default: ~/Documents/agybox)"
+echo "  AGYBOX_SESSIONS     Sessions folder (default: AGYBOX_DIR/sessions)"
+echo "  AGYBOX_BRAIN        Isolated ~/.gemini state folder (default: AGYBOX_DIR/state)"
+echo "  AGYBOX_MODE         auto | proot-distro | proot | bwrap | home"
+echo "  AGYBOX_BACKUP_MODE  minimal (default) | minimal-mcp | verbose"
 echo "  AGYBOX_DRIVE_CLIENT_ID / AGYBOX_DRIVE_CLIENT_SECRET (optional custom OAuth)"
 exit 0
 ;;
@@ -490,6 +491,15 @@ ensure_rclone
 auth_drive || exit 1
 exit 0
 fi
+BMODE="${SUB:-${AGYBOX_BACKUP_MODE:-minimal}}"
+BMODE="${BMODE#--}"
+case "$BMODE" in
+minimal|minimal-mcp|verbose) ;;
+*)
+echo "Unknown backup mode: $BMODE (use minimal, minimal-mcp, or verbose)"
+exit 1
+;;
+esac
 ensure_drive
 if is_termux && command -v proot-distro >/dev/null 2>&1; then
 if proot-distro login fedora -- true >/dev/null 2>&1; then
@@ -498,12 +508,34 @@ fi
 fi
 RC_FLAGS=(--checksum --no-update-modtime --no-update-dir-modtime -v)
 CLI_STATE="$GSTATE/antigravity-cli"
-for D in brain conversations knowledge; do
-if [ -d "$CLI_STATE/$D" ]; then
-echo "Backing up $D to agy-drive:agy-backup/$D..."
-rclone_try rclone copy "$CLI_STATE/$D" "agy-drive:agy-backup/$D" --exclude '*.lock' "${RC_FLAGS[@]}" || exit 1
+BRAIN_EX=(--exclude '*.lock')
+if [ "$BMODE" != "verbose" ]; then
+BRAIN_EX+=(--exclude '**/.system_generated/steps/**')
+BRAIN_EX+=(--exclude '**/.system_generated/logs/chunks/**')
+BRAIN_EX+=(--exclude '**/.system_generated/logs/transcript_full.jsonl')
+BRAIN_EX+=(--exclude '**/.system_generated/tasks/**')
+BRAIN_EX+=(--exclude '**/.system_generated/messages/**')
+BRAIN_EX+=(--exclude '**/scratch/**')
 fi
-done
+echo "Backup mode: $BMODE"
+if [ -d "$CLI_STATE/brain" ]; then
+echo "Backing up brain to agy-drive:agy-backup/brain..."
+rclone_try rclone copy "$CLI_STATE/brain" agy-drive:agy-backup/brain "${BRAIN_EX[@]}" "${RC_FLAGS[@]}" || exit 1
+fi
+if [ -d "$CLI_STATE/conversations" ]; then
+echo "Backing up conversations to agy-drive:agy-backup/conversations..."
+rclone_try rclone copy "$CLI_STATE/conversations" agy-drive:agy-backup/conversations --exclude '*.lock' "${RC_FLAGS[@]}" || exit 1
+fi
+if [ "$BMODE" = "minimal-mcp" ] || [ "$BMODE" = "verbose" ]; then
+if [ -d "$CLI_STATE/mcp" ]; then
+echo "Backing up mcp to agy-drive:agy-backup/mcp..."
+rclone_try rclone copy "$CLI_STATE/mcp" agy-drive:agy-backup/mcp --exclude '*.lock' "${RC_FLAGS[@]}" || exit 1
+fi
+fi
+if [ "$BMODE" = "verbose" ] && [ -d "$CLI_STATE/knowledge" ]; then
+echo "Backing up knowledge to agy-drive:agy-backup/knowledge..."
+rclone_try rclone copy "$CLI_STATE/knowledge" agy-drive:agy-backup/knowledge --exclude '*.lock' "${RC_FLAGS[@]}" || exit 1
+fi
 if [ -f "$CLI_STATE/settings.json" ]; then
 rclone_try rclone copyto "$CLI_STATE/settings.json" agy-drive:agy-backup/settings.json "${RC_FLAGS[@]}" || exit 1
 fi
@@ -535,6 +567,7 @@ rclone_try rclone copy agy-drive:agy-backup/sessions . "${RC_FLAGS[@]}" || exit 
 echo "Restoring brain and conversation state..."
 rclone_try rclone copy agy-drive:agy-backup/brain "$CLI_STATE/brain" "${RC_FLAGS[@]}" || exit 1
 rclone copy agy-drive:agy-backup/conversations "$CLI_STATE/conversations" "${RC_FLAGS[@]}" 2>/dev/null || true
+rclone copy agy-drive:agy-backup/mcp "$CLI_STATE/mcp" "${RC_FLAGS[@]}" 2>/dev/null || true
 rclone copy agy-drive:agy-backup/knowledge "$CLI_STATE/knowledge" "${RC_FLAGS[@]}" 2>/dev/null || true
 rclone copy agy-drive:agy-backup/config "$GSTATE/config" "${RC_FLAGS[@]}" 2>/dev/null || true
 rclone copyto agy-drive:agy-backup/settings.json "$CLI_STATE/settings.json" "${RC_FLAGS[@]}" 2>/dev/null || true

@@ -69,6 +69,7 @@ directory over Android's Storage Access Framework (`DocumentsProvider`):
 * `AGYBOX_SESSIONS` — override sessions folder (`AGYBOX_DIR/sessions`)
 * `AGYBOX_BRAIN` — override isolated `~/.gemini` state folder (`AGYBOX_DIR/state`)
 * `AGYBOX_MODE` — `auto` (default), `proot-distro`, `proot`, `bwrap`, or `home`
+* `AGYBOX_BACKUP_MODE` — `minimal` (default), `minimal-mcp`, or `verbose`
 * `AGYBOX_DRIVE_CLIENT_ID` / `AGYBOX_DRIVE_CLIENT_SECRET` — optional custom Google
   Drive OAuth Desktop app credentials (or enter interactively during `backup` /
   `backup auth`)
@@ -83,7 +84,7 @@ agyb <name|#>                 # start or resume session by name or number
 agyb manage                   # delete, archive (.archive/), or unarchive a session
 agyb temp [new|#]             # create or resume a temp session (.tmp/)
 agyb temp manage              # promote a temp session to primary or delete it
-agyb backup                   # back up brain + sessions to Google Drive via rclone
+agyb backup [mode]             # back up to Google Drive (minimal | minimal-mcp | verbose)
 agyb backup auth              # re-authorize Google Drive in browser
 agyb backup ignore [id]       # edit global or session .backupignore exclusions
 agyb restore                  # restore brain + sessions from Google Drive
@@ -102,9 +103,18 @@ agyb --help                   # show CLI usage
 
 Uses `rclone` with the least-privilege `drive.file` OAuth scope (so `rclone` can
 only access files it creates). On Termux it opens the Android browser via
-`BROWSER=termux-open-url`. Backups upload `brain/`, `conversations/`,
-`knowledge/`, `config/`, and `settings.json` first, then `sessions/` filtered by
-global + per-session `.backupignore` and `--exclude-if-present .nobackup`.
+`BROWSER=termux-open-url`.
+
+Backup modes (`agyb backup [minimal|minimal-mcp|verbose]` or `AGYBOX_BACKUP_MODE`):
+* **`minimal` (default):** Backs up `sessions/` (filtered by `.backupignore`),
+  `conversations/`, `settings.json`, `config/`, and `brain/` while skipping
+  heavy cache/scratch directories (`steps/**`, `logs/chunks/**`,
+  `transcript_full.jsonl`, `tasks/**`, `messages/**`, `scratch/**`)—keeping
+  `transcript.jsonl` and artifacts without hundreds of tiny step files.
+* **`minimal-mcp`:** Everything in `minimal` plus `mcp/` configs so MCP servers
+  keep working across restores.
+* **`verbose`:** Full backup including `steps/`, `chunks/`, `transcript_full.jsonl`,
+  `tasks/`, `messages/`, `scratch/`, `knowledge/`, and `mcp/`.
 
 ### Custom Google Drive `client_id` (recommended)
 
