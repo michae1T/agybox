@@ -1,37 +1,149 @@
-#!/data/data/com.termux/files/usr/bin/bash
-# Runs Google Antigravity CLI (agy) inside Fedora proot-distro on Android (Termux).
-# Tracks per-session folders, last-used timestamps, workspace trust, and conversation IDs.
+#!/usr/bin/env bash
+# agybox - Run Google Antigravity CLI (agy) with isolated sessions and brain state.
+# Works on Android (Termux + Fedora proot-distro) and Linux (proot, bwrap, or isolated HOME).
 
+SELF="$0"
 CMD="${1:-}"
 SUB="${2:-}"
+
+if [ "$CMD" = "--inner" ]; then
+cd "$AGYBOX_WS" || exit 1
+if [ -f .conv ]; then
+CID=$(cat .conv)
+exec "$AGY_BIN" --conversation "$CID" --mode auto --settings "$AGYBOX_TRUST"
+fi
+B0="/tmp/agybox-b0-$$"
+B1="/tmp/agybox-b1-$$"
+ls -1 "$AGYBOX_BRAIN_SUB" 2>/dev/null | sort > "$B0"
+(
+while true; do
+sleep 2
+ls -1 "$AGYBOX_BRAIN_SUB" 2>/dev/null | sort > "$B1"
+NEW=$(comm -13 "$B0" "$B1" | head -n 1)
+if [ -n "$NEW" ]; then
+printf "%s\n" "$NEW" > .conv
+break
+fi
+done
+) &
+WPID=$!
+"$AGY_BIN" --mode auto --settings "$AGYBOX_TRUST"
+RC=$?
+kill "$WPID" 2>/dev/null
+if [ ! -f .conv ]; then
+ls -1 "$AGYBOX_BRAIN_SUB" 2>/dev/null | sort > "$B1"
+NEW=$(comm -13 "$B0" "$B1" | head -n 1)
+if [ -n "$NEW" ]; then
+printf "%s\n" "$NEW" > .conv
+fi
+fi
+rm -f "$B0" "$B1"
+date +%s > .last
+exit "$RC"
+fi
+
 case "$CMD" in
 -h|--help)
-echo "agy-android-proot - Run agy CLI in Fedora proot on Android (Termux)"
+echo "agybox (shortcut: agyb) - Isolated session & brain manager for agy CLI"
 echo "Usage:"
-echo "  agy-android-proot                     List sessions by last used and prompt"
-echo "  agy-android-proot <name|#>            Start or resume session by name or #"
-echo "  agy-android-proot manage              Delete, archive, or unarchive a session"
-echo "  agy-android-proot temp [new|#]        Create or resume a temp session (.tmp/)"
-echo "  agy-android-proot temp manage         Promote or delete a temp session"
-echo "  agy-android-proot backup              Back up chats + sessions to Google Drive"
-echo "  agy-android-proot backup auth         Re-authorize Google Drive in browser"
-echo "  agy-android-proot backup ignore [id]  Edit global or session .backupignore"
-echo "  agy-android-proot restore             Restore chats + sessions from Google Drive"
-echo "  agy-android-proot --help              Show this help message"
+echo "  agybox                     List sessions by last used and prompt"
+echo "  agybox <name|#>            Start or resume session by name or #"
+echo "  agybox manage              Delete, archive, or unarchive a session"
+echo "  agybox temp [new|#]        Create or resume a temp session (.tmp/)"
+echo "  agybox temp manage         Promote or delete a temp session"
+echo "  agybox backup              Back up brain + sessions to Google Drive"
+echo "  agybox backup auth         Re-authorize Google Drive in browser"
+echo "  agybox backup ignore [id]  Edit global or session .backupignore"
+echo "  agybox restore             Restore brain + sessions from Google Drive"
+echo "  agybox install             Install agybox and agyb shortcut into PATH"
+echo "  agybox --help              Show this help message"
+echo "Env vars:"
+echo "  AGYBOX_DIR       Base folder (default: ~/Documents/agybox)"
+echo "  AGYBOX_SESSIONS  Sessions folder (default: AGYBOX_DIR/sessions)"
+echo "  AGYBOX_BRAIN     Isolated brain/state folder (default: AGYBOX_DIR/state)"
+echo "  AGYBOX_MODE      auto | proot-distro | proot | bwrap | home"
 exit 0
 ;;
 esac
 
-cd || exit 1
-mkdir -p sessions
-cd sessions || exit 1
+is_termux() {
+[ -n "${PREFIX:-}" ] && command -v proot-distro >/dev/null 2>&1
+}
+
+if [ "$CMD" = "install" ]; then
+if is_termux; then
+BIN="$PREFIX/bin"
+else
+BIN="$HOME/.local/bin"
+fi
+mkdir -p "$BIN"
+SRC=$(readlink -f "$SELF" 2>/dev/null || echo "$SELF")
+if [ "$SRC" != "$BIN/agybox" ]; then
+cp "$SRC" "$BIN/agybox"
+fi
+chmod +x "$BIN/agybox"
+if is_termux && command -v termux-fix-shebang >/dev/null 2>&1; then
+termux-fix-shebang "$BIN/agybox"
+fi
+ln -sf "$BIN/agybox" "$BIN/agyb"
+echo "Installed $BIN/agybox and $BIN/agyb"
+exit 0
+fi
+
+if [ -n "${AGYBOX_DIR:-}" ]; then
+BASE_DIR="$AGYBOX_DIR"
+elif [ -n "${AGYBOX_SESSIONS:-}" ]; then
+BASE_DIR=$(dirname "$AGYBOX_SESSIONS")
+elif is_termux && [ -d "$HOME/sessions" ]; then
+BASE_DIR="$HOME"
+else
+DOCS="${XDG_DOCUMENTS_DIR:-$HOME/Documents}"
+BASE_DIR="$DOCS/agybox"
+fi
+
+SESS_DIR="${AGYBOX_SESSIONS:-$BASE_DIR/sessions}"
+if [ -n "${AGYBOX_BRAIN:-}" ]; then
+BRAIN_DIR="$AGYBOX_BRAIN"
+elif [ "$BASE_DIR" = "$HOME" ] && [ "$SESS_DIR" = "$HOME/sessions" ]; then
+BRAIN_DIR="$HOME/sessions/.agy-state"
+else
+BRAIN_DIR="$BASE_DIR/state"
+fi
+
+mkdir -p "$SESS_DIR" "$BRAIN_DIR"
+mkdir -p "$BRAIN_DIR/brain" "$BRAIN_DIR/conversations" "$BRAIN_DIR/knowledge"
+mkdir -p "$BRAIN_DIR/daemon" "$BRAIN_DIR/persistent_terminals"
+cd "$SESS_DIR" || exit 1
+
+detect_mode() {
+if [ -n "${AGYBOX_MODE:-}" ] && [ "$AGYBOX_MODE" != "auto" ]; then
+echo "$AGYBOX_MODE"
+return 0
+fi
+if is_termux; then
+echo "proot-distro"
+elif command -v proot >/dev/null 2>&1; then
+echo "proot"
+elif command -v bwrap >/dev/null 2>&1 && bwrap --dev-bind / / true 2>/dev/null; then
+echo "bwrap"
+else
+echo "home"
+fi
+}
 
 ensure_rclone() {
 if ! command -v rclone >/dev/null 2>&1; then
+if is_termux; then
 echo "Installing rclone..."
 pkg install -y rclone || exit 1
+else
+echo "rclone not found. Install rclone with your package manager."
+exit 1
 fi
+fi
+if command -v termux-open-url >/dev/null 2>&1; then
 export BROWSER=termux-open-url
+fi
 }
 
 auth_drive() {
@@ -68,7 +180,7 @@ esac
 init_global_ignore() {
 if [ ! -f .backupignore ]; then
 cat << 'IGN' > .backupignore
-# Global exclusions for agy-android-proot backup (rclone --exclude-from)
+# Global exclusions for agybox backup (rclone --exclude-from)
 /.name
 /.t
 /.ts
@@ -126,32 +238,29 @@ GMD
 fi
 }
 
-build_excludes() {
-init_global_ignore
-cat .backupignore > .ex
-for BASE in . .tmp .archive; do
-[ -d "$BASE" ] || continue
-while IFS= read -r D; do
-if [ "$BASE" = "." ]; then
-P="$D"
-else
-P="$BASE/$D"
+migrate_proot_state() {
+[ -f "$BRAIN_DIR/.migrated" ] && return 0
+cat << 'MIG' > "$SESS_DIR/.sync-agy.sh"
+#!/bin/bash
+SRC=/root/.gemini/antigravity-cli
+DST=/mnt/agy-state
+for D in brain conversations knowledge; do
+if [ -d "$SRC/$D" ] && [ ! -f "$DST/.migrated" ]; then
+mkdir -p "$DST/$D"
+cp -rn "$SRC/$D/." "$DST/$D/" 2>/dev/null || cp -r "$SRC/$D/." "$DST/$D/" 2>/dev/null || true
 fi
-[ -d "$P" ] || continue
-init_session_ignore "$P"
-while IFS= read -r L; do
-L="${L%$'\r'}"
-case "$L" in
-""|\#*) continue ;;
-esac
-L="${L#/}"
-printf '/%s/' "$P" >> .ex
-echo "$L" >> .ex
-printf '/%s/**/' "$P" >> .ex
-echo "$L" >> .ex
-done < "$P/.backupignore"
-done < <(sorted_dirs "$BASE")
 done
+if [ -f "$SRC/settings.json" ] && [ ! -f "$DST/settings.json" ]; then
+cp "$SRC/settings.json" "$DST/settings.json" 2>/dev/null || true
+fi
+find "$DST" -name '*.lock' -delete 2>/dev/null || true
+chmod -R u+rwX "$DST" 2>/dev/null || true
+touch "$DST/.migrated"
+MIG
+B1="$SESS_DIR:/root/sessions"
+B2="$BRAIN_DIR:/mnt/agy-state"
+proot-distro login fedora --bind "$B1" --bind "$B2" -- /bin/bash /root/sessions/.sync-agy.sh
+rm -f "$SESS_DIR/.sync-agy.sh"
 }
 
 sorted_dirs() {
@@ -182,37 +291,32 @@ R=$(LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom | head -c 6)
 printf 'tmp-%s\n' "$R"
 }
 
-write_sync_helper() {
-cat << 'SYN' > .sync-agy.sh
-#!/bin/bash
-SRC=/root/.gemini/antigravity-cli
-DST=/root/sessions/.agy-state
-if [ "$1" = "export" ]; then
-rm -rf "$DST"
-mkdir -p "$DST"
-for D in brain conversations knowledge; do
-if [ -d "$SRC/$D" ]; then
-cp -r "$SRC/$D" "$DST/$D" 2>/dev/null || true
+build_excludes() {
+init_global_ignore
+cat .backupignore > .ex
+for BASE in . .tmp .archive; do
+[ -d "$BASE" ] || continue
+while IFS= read -r D; do
+if [ "$BASE" = "." ]; then
+P="$D"
+else
+P="$BASE/$D"
 fi
+[ -d "$P" ] || continue
+init_session_ignore "$P"
+while IFS= read -r L; do
+L="${L%$'\r'}"
+case "$L" in
+""|\#*) continue ;;
+esac
+L="${L#/}"
+printf '/%s/' "$P" >> .ex
+echo "$L" >> .ex
+printf '/%s/**/' "$P" >> .ex
+echo "$L" >> .ex
+done < "$P/.backupignore"
+done < <(sorted_dirs "$BASE")
 done
-if [ -f "$SRC/settings.json" ]; then
-cp "$SRC/settings.json" "$DST/settings.json" 2>/dev/null || true
-fi
-find "$DST" -name '*.lock' -delete 2>/dev/null || true
-chmod -R u+rwX "$DST" 2>/dev/null || true
-elif [ "$1" = "import" ]; then
-mkdir -p "$SRC"
-for D in brain conversations knowledge; do
-if [ -d "$DST/$D" ]; then
-mkdir -p "$SRC/$D"
-cp -ru "$DST/$D/." "$SRC/$D/" 2>/dev/null || cp -r "$DST/$D/." "$SRC/$D/" 2>/dev/null || true
-fi
-done
-if [ -f "$DST/settings.json" ] && [ ! -f "$SRC/settings.json" ]; then
-cp "$DST/settings.json" "$SRC/settings.json" 2>/dev/null || true
-fi
-fi
-SYN
 }
 
 if [ "$CMD" = "backup" ]; then
@@ -253,28 +357,19 @@ if [ "$SUB" = "auth" ]; then
 auth_drive || exit 1
 exit 0
 fi
-write_sync_helper
-B="$PWD:/root/sessions"
-echo "Exporting Fedora chat history..."
-proot-distro login fedora --bind "$B" -- /bin/bash /root/sessions/.sync-agy.sh export
-if [ -d .agy-state/brain ]; then
-echo "Backing up transcripts to agy-drive:agy-backup/brain..."
-rclone_try rclone copy .agy-state/brain agy-drive:agy-backup/brain -v || { rm -rf .agy-state .sync-agy.sh; exit 1; }
+if is_termux; then
+migrate_proot_state
 fi
-if [ -d .agy-state/conversations ]; then
-echo "Backing up conversation state to agy-drive:agy-backup/conversations..."
-rclone_try rclone copy .agy-state/conversations agy-drive:agy-backup/conversations -v || { rm -rf .agy-state .sync-agy.sh; exit 1; }
+for D in brain conversations knowledge; do
+if [ -d "$BRAIN_DIR/$D" ]; then
+echo "Backing up $D to agy-drive:agy-backup/$D..."
+rclone_try rclone copy "$BRAIN_DIR/$D" "agy-drive:agy-backup/$D" --exclude '*.lock' -v || exit 1
 fi
-if [ -d .agy-state/knowledge ]; then
-rclone_try rclone copy .agy-state/knowledge agy-drive:agy-backup/knowledge -v || { rm -rf .agy-state .sync-agy.sh; exit 1; }
+done
+if [ -f "$BRAIN_DIR/settings.json" ]; then
+rclone_try rclone copyto "$BRAIN_DIR/settings.json" agy-drive:agy-backup/settings.json -v || exit 1
 fi
-if [ -f .agy-state/settings.json ]; then
-rclone_try rclone copyto .agy-state/settings.json agy-drive:agy-backup/settings.json -v || { rm -rf .agy-state .sync-agy.sh; exit 1; }
-fi
-rm -rf .agy-state .sync-agy.sh
 build_excludes
-echo "/.agy-state/**" >> .ex
-echo "/.sync-agy.sh" >> .ex
 echo "Backing up sessions to agy-drive:agy-backup/sessions..."
 EX=(--exclude-from .ex --exclude-if-present .nobackup)
 rclone_try rclone copy . agy-drive:agy-backup/sessions "${EX[@]}" -v
@@ -287,19 +382,16 @@ fi
 
 if [ "$CMD" = "restore" ]; then
 ensure_drive
+if is_termux; then
+migrate_proot_state
+fi
 echo "Restoring sessions from agy-drive:agy-backup/sessions..."
 rclone_try rclone copy agy-drive:agy-backup/sessions . -v || exit 1
-rm -rf .agy-state
-mkdir -p .agy-state/brain .agy-state/conversations .agy-state/knowledge
-echo "Restoring transcripts and conversation state..."
-rclone_try rclone copy agy-drive:agy-backup/brain .agy-state/brain -v || { rm -rf .agy-state; exit 1; }
-rclone copy agy-drive:agy-backup/conversations .agy-state/conversations -v 2>/dev/null || true
-rclone copy agy-drive:agy-backup/knowledge .agy-state/knowledge -v 2>/dev/null || true
-rclone copyto agy-drive:agy-backup/settings.json .agy-state/settings.json -v 2>/dev/null || true
-write_sync_helper
-B="$PWD:/root/sessions"
-proot-distro login fedora --bind "$B" -- /bin/bash /root/sessions/.sync-agy.sh import
-rm -rf .agy-state .sync-agy.sh
+echo "Restoring brain and conversation state..."
+rclone_try rclone copy agy-drive:agy-backup/brain "$BRAIN_DIR/brain" -v || exit 1
+rclone copy agy-drive:agy-backup/conversations "$BRAIN_DIR/conversations" -v 2>/dev/null || true
+rclone copy agy-drive:agy-backup/knowledge "$BRAIN_DIR/knowledge" -v 2>/dev/null || true
+rclone copyto agy-drive:agy-backup/settings.json "$BRAIN_DIR/settings.json" -v 2>/dev/null || true
 echo "Restore complete."
 exit 0
 fi
@@ -565,6 +657,10 @@ mkdir -p "$REL"
 init_session_ignore "$REL"
 init_common_context
 date +%s > "$REL/.last"
+MODE=$(detect_mode)
+
+if [ "$MODE" = "proot-distro" ]; then
+migrate_proot_state
 printf '%s\n' "$REL" > .name
 W="/root/sessions/$REL"
 echo "{\"trustedWorkspaces\":[\"$W\"]}" > .t
@@ -603,11 +699,89 @@ done
 WPID=$!
 /root/.local/bin/agy --mode auto --settings /root/sessions/.t
 kill "$WPID" 2>/dev/null
+if [ ! -f .conv ]; then
+ls -1 "$BRAIN" 2>/dev/null | sort > /tmp/b1
+NEW=$(comm -13 /tmp/b0 /tmp/b1 | head -n 1)
+if [ -n "$NEW" ]; then
+printf "%s\n" "$NEW" > .conv
+fi
+fi
 fi
 date +%s > .last' > .run-agy.sh
 
-B="$PWD:/root/sessions"
+B1="$SESS_DIR:/root/sessions"
+B2="$BRAIN_DIR/brain:/root/.gemini/antigravity-cli/brain"
+B3="$BRAIN_DIR/conversations:/root/.gemini/antigravity-cli/conversations"
+B4="$BRAIN_DIR/knowledge:/root/.gemini/antigravity-cli/knowledge"
 A=(login fedora)
-A+=(--bind "$B")
+A+=(--bind "$B1" --bind "$B2" --bind "$B3" --bind "$B4")
 A+=(-- /bin/bash /root/sessions/.run-agy.sh)
 exec proot-distro "${A[@]}"
+fi
+
+AGY_BIN=$(command -v agy 2>/dev/null || true)
+if [ -z "$AGY_BIN" ] && [ -x "$HOME/.local/bin/agy" ]; then
+AGY_BIN="$HOME/.local/bin/agy"
+fi
+if [ -z "$AGY_BIN" ]; then
+echo "agy not found in PATH or $HOME/.local/bin/agy"
+exit 1
+fi
+
+SELF_ABS=$(readlink -f "$SELF" 2>/dev/null || echo "$SELF")
+TRUST_FILE="$SESS_DIR/.t"
+TARGET_WS="$SESS_DIR/$REL"
+echo "{\"trustedWorkspaces\":[\"$TARGET_WS\"]}" > "$TRUST_FILE"
+export AGY_BIN
+export AGYBOX_WS="$TARGET_WS"
+export AGYBOX_TRUST="$TRUST_FILE"
+export AGYBOX_BRAIN_SUB="$BRAIN_DIR/brain"
+
+ensure_host_mounts() {
+mkdir -p "$HOME/.gemini/antigravity-cli/brain"
+mkdir -p "$HOME/.gemini/antigravity-cli/conversations"
+mkdir -p "$HOME/.gemini/antigravity-cli/knowledge"
+mkdir -p "$HOME/.gemini/antigravity-cli/daemon"
+mkdir -p "$HOME/.gemini/antigravity-cli/persistent_terminals"
+mkdir -p "$HOME/.gemini/config"
+[ -e "$HOME/.gemini/config/GEMINI.md" ] || touch "$HOME/.gemini/config/GEMINI.md"
+}
+
+if [ "$MODE" = "proot" ]; then
+ensure_host_mounts
+PA=(-b "$BRAIN_DIR/brain:$HOME/.gemini/antigravity-cli/brain")
+PA+=(-b "$BRAIN_DIR/conversations:$HOME/.gemini/antigravity-cli/conversations")
+PA+=(-b "$BRAIN_DIR/knowledge:$HOME/.gemini/antigravity-cli/knowledge")
+PA+=(-b "$BRAIN_DIR/daemon:$HOME/.gemini/antigravity-cli/daemon")
+PA+=(-b "$BRAIN_DIR/persistent_terminals:$HOME/.gemini/antigravity-cli/persistent_terminals")
+PA+=(-b "$SESS_DIR/GEMINI.md:$HOME/.gemini/config/GEMINI.md")
+PA+=(-w "$TARGET_WS")
+exec proot "${PA[@]}" "$SELF_ABS" --inner
+elif [ "$MODE" = "bwrap" ]; then
+ensure_host_mounts
+BA=(--dev-bind / /)
+BA+=(--bind "$BRAIN_DIR/brain" "$HOME/.gemini/antigravity-cli/brain")
+BA+=(--bind "$BRAIN_DIR/conversations" "$HOME/.gemini/antigravity-cli/conversations")
+BA+=(--bind "$BRAIN_DIR/knowledge" "$HOME/.gemini/antigravity-cli/knowledge")
+BA+=(--bind "$BRAIN_DIR/daemon" "$HOME/.gemini/antigravity-cli/daemon")
+BA+=(--bind "$BRAIN_DIR/persistent_terminals" "$HOME/.gemini/antigravity-cli/persistent_terminals")
+BA+=(--bind "$SESS_DIR/GEMINI.md" "$HOME/.gemini/config/GEMINI.md")
+BA+=(--chdir "$TARGET_WS")
+exec bwrap "${BA[@]}" "$SELF_ABS" --inner
+else
+ISO="$BRAIN_DIR/home"
+mkdir -p "$ISO/.gemini/antigravity-cli" "$ISO/.gemini/config"
+for D in brain conversations knowledge daemon persistent_terminals; do
+ln -sfn "$BRAIN_DIR/$D" "$ISO/.gemini/antigravity-cli/$D"
+done
+for D in bin builtin mcp; do
+if [ -d "$HOME/.gemini/antigravity-cli/$D" ]; then
+ln -sfn "$HOME/.gemini/antigravity-cli/$D" "$ISO/.gemini/antigravity-cli/$D"
+fi
+done
+if [ -d "$HOME/.gemini/config/projects" ] && [ ! -e "$ISO/.gemini/config/projects" ]; then
+ln -sfn "$HOME/.gemini/config/projects" "$ISO/.gemini/config/projects"
+fi
+ln -sfn "$SESS_DIR/GEMINI.md" "$ISO/.gemini/config/GEMINI.md"
+HOME="$ISO" exec "$SELF_ABS" --inner
+fi
