@@ -112,13 +112,15 @@ Backup modes (`agyb backup [minimal|minimal-mcp|verbose]` or `AGYBOX_BACKUP_MODE
   directories (`steps/**`, `logs/chunks/**`, `logs/media/**`,
   `transcript_full.jsonl`, `tasks/**`, `messages/**`, `scratch/**`)—keeping
   `transcript.jsonl` and artifacts without hundreds of tiny step files or
-  cached media. `config/AGENTS.md` lets the agent know deep cached tool
-  outputs/media/scratch may be absent after a restore.
+  cached media. `config/AGENTS.md` includes both the `.backupignore` sensitive-file
+  exclusion policy and the notice that cached tool outputs/media/scratch may be
+  absent after a restore.
 * **`minimal-mcp`:** Everything in `minimal` plus `mcp/` and `config/mcp*` so
   MCP servers keep working across restores.
 * **`verbose`:** Full backup including `steps/`, `chunks/`, `media/`,
   `transcript_full.jsonl`, `tasks/`, `messages/`, `scratch/`, `knowledge/`,
-  `mcp/`, and all of `config/`.
+  `mcp/`, and all of `config/` (`config/AGENTS.md` keeps the exclusion policy
+  without the minimal notice).
 
 ### Custom Google Drive `client_id` (recommended)
 

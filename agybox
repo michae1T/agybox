@@ -306,9 +306,8 @@ SIGN
 fi
 }
 
-init_common_context() {
-if [ ! -f GEMINI.md ]; then
-cat << 'GMD' > GEMINI.md
+backup_policy_text() {
+cat << 'GMD'
 # Session Backup Exclusion Policy
 
 Each session directory has a `.backupignore` file (using `rclone --exclude-from` syntax, one pattern per line, such as `folder/**`, `*.bin`, or `secret.jpg`) that controls what is excluded when backing up to the user's private Google Drive.
@@ -321,9 +320,39 @@ Whenever you create, download, inspect, or notice files in the current session d
 2. Use `rclone` patterns relative to the session root (for directories use `dir/**`; for single files use `filename.ext` or `subdir/filename.ext`).
 3. If you are in doubt about whether a file or binary should be excluded or backed up, ask the user for confirmation before changing `.backupignore` or assuming it is safe.
 GMD
+}
+
+write_agents_md() {
+WMODE="${1:-minimal}"
+mkdir -p "$GSTATE/config"
+backup_policy_text > "$GSTATE/config/AGENTS.md"
+if [ "$WMODE" != "verbose" ]; then
+cat << 'AMD' >> "$GSTATE/config/AGENTS.md"
+
+# Backup Mode Notice (Minimal Brain State)
+
+This `agybox` state is backed up in `minimal` / `minimal-mcp` mode to avoid uploading hundreds of cached tool-output files.
+If this environment was restored from Drive, the following `brain/<id>/` subdirectories were intentionally omitted:
+- `.system_generated/steps/`
+- `.system_generated/logs/chunks/` and `.system_generated/logs/media/`
+- `.system_generated/logs/transcript_full.jsonl`
+- `.system_generated/tasks/` and `.system_generated/messages/`
+- `scratch/`
+
+You still have the resumed conversation state (`conversations/`), `transcript.jsonl`, and all non-ignored files in the session workspace. If you try to look up an older truncated tool output or scratch file and it is missing on disk, assume it was trimmed by minimal backup rather than deleted accidentally, and re-run the check or ask the user if needed.
+AMD
+fi
+}
+
+init_common_context() {
+if [ ! -f GEMINI.md ]; then
+backup_policy_text > GEMINI.md
 fi
 if [ ! -f "$GSTATE/config/GEMINI.md" ] || [ GEMINI.md -nt "$GSTATE/config/GEMINI.md" ]; then
 cp GEMINI.md "$GSTATE/config/GEMINI.md"
+fi
+if [ ! -f "$GSTATE/config/AGENTS.md" ]; then
+write_agents_md "${AGYBOX_BACKUP_MODE:-minimal}"
 fi
 }
 
@@ -551,34 +580,16 @@ if [ -f "$CLI_STATE/settings.json" ]; then
 echo "Backing up settings.json..."
 rclone_try rclone copyto "$CLI_STATE/settings.json" agy-drive:agy-backup/settings.json --no-traverse "${RC_FLAGS[@]}" || exit 1
 fi
+write_agents_md "$BMODE"
 if [ "$BMODE" = "verbose" ]; then
-rm -f "$GSTATE/config/AGENTS.md"
-if [ -d "$GSTATE/config" ]; then
 echo "Backing up config to agy-drive:agy-backup/config..."
 rclone_try rclone copy "$GSTATE/config" agy-drive:agy-backup/config "${RC_FLAGS[@]}" || exit 1
-fi
-else
-mkdir -p "$GSTATE/config"
-cat << 'AMD' > "$GSTATE/config/AGENTS.md"
-# Backup Mode Notice (Minimal Brain State)
-
-This `agybox` state is backed up in `minimal` / `minimal-mcp` mode to avoid uploading hundreds of cached tool-output files.
-If this environment was restored from Drive, the following `brain/<id>/` subdirectories were intentionally omitted:
-- `.system_generated/steps/`
-- `.system_generated/logs/chunks/` and `.system_generated/logs/media/`
-- `.system_generated/logs/transcript_full.jsonl`
-- `.system_generated/tasks/` and `.system_generated/messages/`
-- `scratch/`
-
-You still have the resumed conversation state (`conversations/`), `transcript.jsonl`, and all non-ignored files in the session workspace. If you try to look up an older truncated tool output or scratch file and it is missing on disk, assume it was trimmed by minimal backup rather than deleted accidentally, and re-run the check or ask the user if needed.
-AMD
-if [ "$BMODE" = "minimal-mcp" ]; then
+elif [ "$BMODE" = "minimal-mcp" ]; then
 echo "Backing up config (AGENTS.md + mcp) to agy-drive:agy-backup/config..."
 rclone_try rclone copy "$GSTATE/config" agy-drive:agy-backup/config --filter '+ /AGENTS.md' --filter '+ /mcp*' --filter '+ /mcp/**' --filter '- **' "${RC_FLAGS[@]}" || exit 1
 else
-echo "Backing up AGENTS.md notice..."
+echo "Backing up config/AGENTS.md..."
 rclone_try rclone copyto "$GSTATE/config/AGENTS.md" agy-drive:agy-backup/config/AGENTS.md --no-traverse "${RC_FLAGS[@]}" || exit 1
-fi
 fi
 build_excludes
 echo "Backing up sessions to agy-drive:agy-backup/sessions..."
