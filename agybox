@@ -525,6 +525,7 @@ BRAIN_EX=(--exclude '*.lock')
 if [ "$BMODE" != "verbose" ]; then
 BRAIN_EX+=(--exclude '**/.system_generated/steps/**')
 BRAIN_EX+=(--exclude '**/.system_generated/logs/chunks/**')
+BRAIN_EX+=(--exclude '**/.system_generated/logs/media/**')
 BRAIN_EX+=(--exclude '**/.system_generated/logs/transcript_full.jsonl')
 BRAIN_EX+=(--exclude '**/.system_generated/tasks/**')
 BRAIN_EX+=(--exclude '**/.system_generated/messages/**')
@@ -561,7 +562,7 @@ cat << 'AMD' > "$GSTATE/config/AGENTS.md"
 This `agybox` state is backed up in `minimal` / `minimal-mcp` mode to avoid uploading hundreds of cached tool-output files.
 If this environment was restored from Drive, the following `brain/<id>/` subdirectories were intentionally omitted:
 - `.system_generated/steps/`
-- `.system_generated/logs/chunks/`
+- `.system_generated/logs/chunks/` and `.system_generated/logs/media/`
 - `.system_generated/logs/transcript_full.jsonl`
 - `.system_generated/tasks/` and `.system_generated/messages/`
 - `scratch/`

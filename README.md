@@ -109,14 +109,16 @@ Backup modes (`agyb backup [minimal|minimal-mcp|verbose]` or `AGYBOX_BACKUP_MODE
 * **`minimal` (default):** Backs up `sessions/` (filtered by `.backupignore`),
   `conversations/`, `settings.json`, `config/`, and `brain/` while skipping
   heavy cache/scratch directories (`steps/**`, `logs/chunks/**`,
-  `transcript_full.jsonl`, `tasks/**`, `messages/**`, `scratch/**`)—keeping
-  `transcript.jsonl` and artifacts without hundreds of tiny step files. Also
-  writes a notice into `config/AGENTS.md` so the agent knows deep cached tool
-  outputs/scratch may be absent after a restore.
+  `logs/media/**`, `transcript_full.jsonl`, `tasks/**`, `messages/**`,
+  `scratch/**`)—keeping `transcript.jsonl` and artifacts without hundreds of
+  tiny step files or cached media. Also writes a notice into `config/AGENTS.md`
+  so the agent knows deep cached tool outputs/media/scratch may be absent after
+  a restore.
 * **`minimal-mcp`:** Everything in `minimal` plus `mcp/` configs so MCP servers
   keep working across restores.
-* **`verbose`:** Full backup including `steps/`, `chunks/`, `transcript_full.jsonl`,
-  `tasks/`, `messages/`, `scratch/`, `knowledge/`, and `mcp/`.
+* **`verbose`:** Full backup including `steps/`, `chunks/`, `media/`,
+  `transcript_full.jsonl`, `tasks/`, `messages/`, `scratch/`, `knowledge/`, and
+  `mcp/`.
 
 ### Custom Google Drive `client_id` (recommended)
 
